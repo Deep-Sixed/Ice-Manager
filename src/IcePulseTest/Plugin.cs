@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using Sandbox.ModAPI;
 using VRage;
 using VRage.Plugins;
@@ -14,10 +15,10 @@ using MyItemType = VRage.Game.ModAPI.Ingame.MyItemType;
 namespace IcePulseTest;
 
 /// <summary>
-/// One-shot client-side inventory authority diagnostic for Space Engineers/Pulsar.
-/// It requests exactly 1 kg of Ice once, then verifies source and target inventories
-/// after replication delays so we can distinguish a local API success from a
-/// server-authoritative accepted transfer.
+/// One-shot client-side authority diagnostic for Space Engineers/Pulsar.
+/// Version 0.4.0 tags blocks through Custom Data and invokes the public
+/// Sandbox.Game.MyInventory.TransferByUser path used for user-initiated transfers,
+/// then verifies the server-replicated inventory state after +2s and +5s.
 /// </summary>
 public sealed class Plugin : IPlugin
 {
@@ -42,11 +43,12 @@ public sealed class Plugin : IPlugin
     private double _beforeTargetKg;
     private bool _verified2;
     private bool _complete;
+    private MethodInfo? _transferByUser;
 
     public void Init(object gameInstance)
     {
-        Log("Ice Pulse Test 0.3.0 initialized - multi-source authority diagnostic.");
-        Log("Tags are read from block NAMES: cargo " + SourceTag + " and generator " + TargetTag + ". Custom Data is not used.");
+        Log("Ice Pulse Test 0.4.0 initialized - Custom Data + TransferByUser diagnostic.");
+        Log("Tags are read ONLY from Custom Data: cargo " + SourceTag + " and generator " + TargetTag + ". Block names are unrestricted.");
     }
 
     public void Dispose()
@@ -78,11 +80,12 @@ public sealed class Plugin : IPlugin
         }
         catch (Exception ex)
         {
-            string error = ex.GetType().FullName + ": " + ex.Message;
+            Exception root = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
+            string error = root.GetType().FullName + ": " + root.Message;
             if (!string.Equals(error, _lastError, StringComparison.Ordinal))
             {
                 _lastError = error;
-                Log("ERROR " + error + Environment.NewLine + ex.StackTrace);
+                Log("ERROR " + error + Environment.NewLine + root.StackTrace);
             }
         }
     }
@@ -97,18 +100,20 @@ public sealed class Plugin : IPlugin
         }
 
         Sandbox.ModAPI.IMyGasGenerator? targetBlock = null;
+        int targetCount = 0;
         foreach (Sandbox.ModAPI.IMyGasGenerator block in grid.GetFatBlocks<Sandbox.ModAPI.IMyGasGenerator>())
         {
-            if (CanManage(block) && HasNameTag(block, TargetTag))
-            {
+            if (!CanManage(block) || !HasCustomDataTag(block, TargetTag))
+                continue;
+
+            targetCount++;
+            if (targetBlock == null)
                 targetBlock = block;
-                break;
-            }
         }
 
         if (targetBlock == null)
         {
-            ReportState("Idle: no accessible O2/H2 Generator BLOCK NAME contains " + TargetTag + ".");
+            ReportState("Idle: no accessible O2/H2 Generator Custom Data contains " + TargetTag + ".");
             return;
         }
 
@@ -126,16 +131,15 @@ public sealed class Plugin : IPlugin
         IMyInventory? source = null;
         MyInventoryItem selectedItem = default;
         string selectedSourceName = string.Empty;
-        int taggedSourceCount = 0;
-        int taggedSourcesWithIce = 0;
+        int sourceCount = 0;
+        int sourcesWithIce = 0;
 
         foreach (Sandbox.ModAPI.IMyCargoContainer block in grid.GetFatBlocks<Sandbox.ModAPI.IMyCargoContainer>())
         {
-            if (!CanManage(block) || !HasNameTag(block, SourceTag))
+            if (!CanManage(block) || !HasCustomDataTag(block, SourceTag))
                 continue;
 
-            taggedSourceCount++;
-
+            sourceCount++;
             IMyInventory? candidate = ((IMyIngameEntity)block).GetInventory(0);
             if (candidate == null)
                 continue;
@@ -151,7 +155,7 @@ public sealed class Plugin : IPlugin
 
                 double available = (double)item.Amount;
                 if (available > 0)
-                    taggedSourcesWithIce++;
+                    sourcesWithIce++;
 
                 if (available < PulseKg)
                     break;
@@ -169,47 +173,109 @@ public sealed class Plugin : IPlugin
                 break;
         }
 
-        if (taggedSourceCount == 0)
+        if (sourceCount == 0)
         {
-            ReportState("Idle: no accessible cargo BLOCK NAME contains " + SourceTag + ".");
+            ReportState("Idle: no accessible cargo container Custom Data contains " + SourceTag + ".");
             return;
         }
 
         if (source == null)
         {
-            if (taggedSourcesWithIce == 0)
-                ReportState("Idle: found " + taggedSourceCount + " tagged " + SourceTag + " cargo block(s), but none contains Ice.");
+            if (sourcesWithIce == 0)
+                ReportState("Idle: found " + sourceCount + " " + SourceTag + " cargo block(s), but none contains Ice.");
             else
-                ReportState("Idle: tagged " + SourceTag + " cargo has Ice, but no source with >=1 kg and a conveyor path to " + TargetTag + " was found.");
+                ReportState("Idle: tagged cargo has Ice, but no source with >=1 kg and a conveyor path to the selected " + TargetTag + " was found.");
             return;
         }
 
         _beforeSourceKg = (double)source.GetItemAmount(IceType);
         _beforeTargetKg = (double)target.GetItemAmount(IceType);
+        string targetName = ((Sandbox.ModAPI.Ingame.IMyTerminalBlock)targetBlock).CustomName ?? string.Empty;
 
         Log("TEST BEGIN");
-        Log("SELECTED SOURCE " + selectedSourceName);
-        Log("BEFORE Source=" + _beforeSourceKg.ToString("0.###") + " kg Target=" + _beforeTargetKg.ToString("0.###") + " kg");
+        Log("DISCOVERY Sources=" + sourceCount + " Targets=" + targetCount);
+        Log("SELECTED SOURCE name='" + selectedSourceName + "' CustomData contains " + SourceTag);
+        Log("SELECTED TARGET name='" + targetName + "' CustomData contains " + TargetTag);
+        Log("BEFORE Source=" + _beforeSourceKg.ToString("0.###") + " kg Target=" + _beforeTargetKg.ToString("0.###") + " kg ItemId=" + selectedItem.ItemId);
 
-        bool moved = source.TransferItemTo(target, selectedItem, (MyFixedPoint)PulseKg);
-        double immediateSource = (double)source.GetItemAmount(IceType);
-        double immediateTarget = (double)target.GetItemAmount(IceType);
-
-        Log("REQUEST TransferItemTo(1 kg) returned " + (moved ? "TRUE" : "FALSE"));
-        Log("IMMEDIATE Source=" + immediateSource.ToString("0.###") + " kg Target=" + immediateTarget.ToString("0.###") + " kg");
-
-        if (!moved)
+        if (!TryTransferByUser(source, target, selectedItem.ItemId, (MyFixedPoint)PulseKg))
         {
-            Log("RESULT: transfer request was rejected immediately.");
+            Log("RESULT: TransferByUser request could not be issued.");
             _complete = true;
             return;
         }
+
+        double immediateSource = (double)source.GetItemAmount(IceType);
+        double immediateTarget = (double)target.GetItemAmount(IceType);
+        Log("REQUEST TransferByUser(1 kg) invoked successfully.");
+        Log("IMMEDIATE Source=" + immediateSource.ToString("0.###") + " kg Target=" + immediateTarget.ToString("0.###") + " kg");
 
         _pendingSource = source;
         _pendingTarget = target;
         _requestUtc = now;
         _verified2 = false;
-        ReportState("Request returned TRUE; waiting for server replication checks at +2s and +5s.");
+        ReportState("TransferByUser invoked; waiting for server replication checks at +2s and +5s.");
+    }
+
+    private bool TryTransferByUser(IMyInventory source, IMyInventory target, uint itemId, MyFixedPoint amount)
+    {
+        MethodInfo? method = _transferByUser ?? ResolveTransferByUser(source);
+        if (method == null)
+        {
+            Log("REQUEST ERROR: public Sandbox.Game.MyInventory.TransferByUser method was not found in loaded game assemblies.");
+            return false;
+        }
+
+        _transferByUser = method;
+        ParameterInfo[] p = method.GetParameters();
+        Log("NETWORK PATH " + method.DeclaringType?.FullName + "." + method.Name + " sourceType=" + source.GetType().FullName + " targetType=" + target.GetType().FullName);
+
+        try
+        {
+            object?[] args = new object?[] { source, target, itemId, -1, amount };
+            method.Invoke(null, args);
+            return true;
+        }
+        catch (ArgumentException ex)
+        {
+            Log("REQUEST ERROR: reflection argument binding failed: " + ex.Message + "; amountParameter=" + p[4].ParameterType.FullName);
+            return false;
+        }
+    }
+
+    private static MethodInfo? ResolveTransferByUser(IMyInventory source)
+    {
+        Type? type = source.GetType();
+        while (type != null)
+        {
+            if (string.Equals(type.FullName, "Sandbox.Game.MyInventory", StringComparison.Ordinal))
+                break;
+            type = type.BaseType;
+        }
+
+        if (type == null)
+        {
+            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                type = assembly.GetType("Sandbox.Game.MyInventory", false, false);
+                if (type != null)
+                    break;
+            }
+        }
+
+        if (type == null)
+            return null;
+
+        foreach (MethodInfo method in type.GetMethods(BindingFlags.Public | BindingFlags.Static))
+        {
+            if (!string.Equals(method.Name, "TransferByUser", StringComparison.Ordinal))
+                continue;
+            ParameterInfo[] parameters = method.GetParameters();
+            if (parameters.Length == 5 && parameters[2].ParameterType == typeof(uint) && parameters[3].ParameterType == typeof(int))
+                return method;
+        }
+
+        return null;
     }
 
     private void VerifyPending(DateTime now)
@@ -218,12 +284,9 @@ public sealed class Plugin : IPlugin
             return;
 
         TimeSpan elapsed = now - _requestUtc;
-
         if (!_verified2 && elapsed >= VerifyDelay2)
         {
-            double source2 = (double)_pendingSource.GetItemAmount(IceType);
-            double target2 = (double)_pendingTarget.GetItemAmount(IceType);
-            Log("AFTER +2s Source=" + source2.ToString("0.###") + " kg Target=" + target2.ToString("0.###") + " kg");
+            LogInventory("AFTER +2s");
             _verified2 = true;
         }
 
@@ -238,17 +301,11 @@ public sealed class Plugin : IPlugin
         double targetDelta = target5 - _beforeTargetKg;
 
         if (sourceDelta <= -0.999 && targetDelta >= 0.999)
-        {
-            Log("RESULT: SERVER ACCEPTED - source lost ~1 kg and target gained ~1 kg.");
-        }
+            Log("RESULT: SERVER ACCEPTED - source lost ~1 kg and target gained ~1 kg via TransferByUser.");
         else if (Math.Abs(sourceDelta) < 0.001 && Math.Abs(targetDelta) < 0.001)
-        {
-            Log("RESULT: SERVER NOT CONFIRMED - inventories returned to/remaining at pre-request values.");
-        }
+            Log("RESULT: SERVER NOT CONFIRMED - TransferByUser produced no replicated inventory change.");
         else
-        {
             Log("RESULT: AMBIGUOUS - SourceDelta=" + sourceDelta.ToString("0.###") + " kg TargetDelta=" + targetDelta.ToString("0.###") + " kg.");
-        }
 
         Log("TEST COMPLETE - disable/re-enable or restart Space Engineers to run a fresh one-shot test.");
         _pendingSource = null;
@@ -256,16 +313,22 @@ public sealed class Plugin : IPlugin
         _complete = true;
     }
 
+    private void LogInventory(string prefix)
+    {
+        if (_pendingSource == null || _pendingTarget == null)
+            return;
+        double s = (double)_pendingSource.GetItemAmount(IceType);
+        double t = (double)_pendingTarget.GetItemAmount(IceType);
+        Log(prefix + " Source=" + s.ToString("0.###") + " kg Target=" + t.ToString("0.###") + " kg");
+    }
+
     private static IMyCubeGrid? GetControlledGrid()
     {
         var controlled = MyAPIGateway.Session?.LocalHumanPlayer?.Controller?.ControlledEntity;
-
         if (controlled is IMyCubeBlock cubeBlock)
             return cubeBlock.CubeGrid;
-
         if (controlled is IMyCubeGrid grid)
             return grid;
-
         return null;
     }
 
@@ -274,17 +337,16 @@ public sealed class Plugin : IPlugin
         return ((Sandbox.ModAPI.Ingame.IMyTerminalBlock)block).HasLocalPlayerAccess();
     }
 
-    private static bool HasNameTag(Sandbox.ModAPI.IMyTerminalBlock block, string tag)
+    private static bool HasCustomDataTag(Sandbox.ModAPI.IMyTerminalBlock block, string tag)
     {
-        string name = ((Sandbox.ModAPI.Ingame.IMyTerminalBlock)block).CustomName ?? string.Empty;
-        return name.IndexOf(tag, StringComparison.OrdinalIgnoreCase) >= 0;
+        string data = ((Sandbox.ModAPI.Ingame.IMyTerminalBlock)block).CustomData ?? string.Empty;
+        return data.IndexOf(tag, StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     private void ReportState(string state)
     {
         if (string.Equals(state, _lastState, StringComparison.Ordinal))
             return;
-
         _lastState = state;
         Log(state);
     }
