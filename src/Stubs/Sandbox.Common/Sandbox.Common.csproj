@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <AssemblyName>Sandbox.Common</AssemblyName>
+    <RootNamespace>Sandbox</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../VRage/VRage.csproj" Private="false" />
+    <ProjectReference Include="../VRage.Library/VRage.Library.csproj" Private="false" />
+    <ProjectReference Include="../VRage.Game/VRage.Game.csproj" Private="false" />
+  </ItemGroup>
+</Project>
