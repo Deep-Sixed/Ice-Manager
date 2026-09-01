@@ -29,6 +29,7 @@ namespace Sandbox.ModAPI.Ingame
     public interface IMyTerminalBlock : VRage.Game.ModAPI.Ingame.IMyCubeBlock
     {
         string CustomName { get; set; }
+        string CustomData { get; set; }
         bool HasLocalPlayerAccess();
     }
 
