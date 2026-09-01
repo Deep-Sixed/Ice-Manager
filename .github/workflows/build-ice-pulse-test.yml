@@ -49,17 +49,18 @@ jobs:
           grep -Fq 'Ice Pulse Test' /tmp/plugin-strings.txt
           grep -Fq '[IceSource]' /tmp/plugin-strings.txt
           grep -Fq '[IceTest]' /tmp/plugin-strings.txt
+          grep -Fq 'SELECTED SOURCE' /tmp/plugin-strings.txt
           grep -Fq 'SERVER ACCEPTED' /tmp/plugin-strings.txt
           grep -Fq 'AFTER +5s' /tmp/plugin-strings.txt
           grep -Fq 'IcePulseTest.log' /tmp/plugin-strings.txt
           grep -Fq '<FriendlyName>Ice Pulse Test</FriendlyName>' out/IcePulseTest.xml
           grep -Fq '<Runtimes>CoreCLR</Runtimes>' out/IcePulseTest.xml
-          grep -Fq '0.2.0 diagnostic' out/IcePulseTest.xml
+          grep -Fq '0.3.0 diagnostic' out/IcePulseTest.xml
 
       - name: Upload plugin package
         uses: actions/upload-artifact@v4
         with:
-          name: IcePulseTest-0.2.0
+          name: IcePulseTest-0.3.0
           path: |
             out/IcePulseTest.dll
             out/IcePulseTest.xml
