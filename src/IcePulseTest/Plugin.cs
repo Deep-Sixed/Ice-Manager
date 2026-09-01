@@ -45,7 +45,7 @@ public sealed class Plugin : IPlugin
 
     public void Init(object gameInstance)
     {
-        Log("Ice Pulse Test 0.2.0 initialized - one-shot authority diagnostic.");
+        Log("Ice Pulse Test 0.3.0 initialized - multi-source authority diagnostic.");
         Log("Tags are read from block NAMES: cargo " + SourceTag + " and generator " + TargetTag + ". Custom Data is not used.");
     }
 
@@ -96,16 +96,6 @@ public sealed class Plugin : IPlugin
             return;
         }
 
-        Sandbox.ModAPI.IMyCargoContainer? sourceBlock = null;
-        foreach (Sandbox.ModAPI.IMyCargoContainer block in grid.GetFatBlocks<Sandbox.ModAPI.IMyCargoContainer>())
-        {
-            if (CanManage(block) && HasNameTag(block, SourceTag))
-            {
-                sourceBlock = block;
-                break;
-            }
-        }
-
         Sandbox.ModAPI.IMyGasGenerator? targetBlock = null;
         foreach (Sandbox.ModAPI.IMyGasGenerator block in grid.GetFatBlocks<Sandbox.ModAPI.IMyGasGenerator>())
         {
@@ -114,12 +104,6 @@ public sealed class Plugin : IPlugin
                 targetBlock = block;
                 break;
             }
-        }
-
-        if (sourceBlock == null)
-        {
-            ReportState("Idle: no accessible cargo BLOCK NAME contains " + SourceTag + ".");
-            return;
         }
 
         if (targetBlock == null)
@@ -132,65 +116,100 @@ public sealed class Plugin : IPlugin
         targetTerminal.UseConveyorSystem = false;
         targetTerminal.AutoRefill = false;
 
-        IMyInventory? source = ((IMyIngameEntity)sourceBlock).GetInventory(0);
         IMyInventory? target = ((IMyIngameEntity)targetBlock).GetInventory(0);
-        if (source == null || target == null)
+        if (target == null)
         {
-            ReportState("Idle: source or target inventory unavailable.");
+            ReportState("Idle: target inventory unavailable.");
             return;
         }
 
-        if (!source.CanTransferItemTo(target, IceType))
-        {
-            ReportState("Idle: no conveyor path from " + SourceTag + " to " + TargetTag + ".");
-            return;
-        }
+        IMyInventory? source = null;
+        MyInventoryItem selectedItem = default;
+        string selectedSourceName = string.Empty;
+        int taggedSourceCount = 0;
+        int taggedSourcesWithIce = 0;
 
-        _items.Clear();
-        source.GetItems(_items);
-
-        for (int i = 0; i < _items.Count; i++)
+        foreach (Sandbox.ModAPI.IMyCargoContainer block in grid.GetFatBlocks<Sandbox.ModAPI.IMyCargoContainer>())
         {
-            MyInventoryItem item = _items[i];
-            if (!item.Type.Equals(IceType))
+            if (!CanManage(block) || !HasNameTag(block, SourceTag))
                 continue;
 
-            double available = (double)item.Amount;
-            if (available < PulseKg)
+            taggedSourceCount++;
+
+            IMyInventory? candidate = ((IMyIngameEntity)block).GetInventory(0);
+            if (candidate == null)
+                continue;
+
+            _items.Clear();
+            candidate.GetItems(_items);
+
+            for (int i = 0; i < _items.Count; i++)
             {
-                ReportState("Idle: source has less than 1 kg of Ice.");
-                return;
+                MyInventoryItem item = _items[i];
+                if (!item.Type.Equals(IceType))
+                    continue;
+
+                double available = (double)item.Amount;
+                if (available > 0)
+                    taggedSourcesWithIce++;
+
+                if (available < PulseKg)
+                    break;
+
+                if (!candidate.CanTransferItemTo(target, IceType))
+                    break;
+
+                source = candidate;
+                selectedItem = item;
+                selectedSourceName = ((Sandbox.ModAPI.Ingame.IMyTerminalBlock)block).CustomName ?? string.Empty;
+                break;
             }
 
-            _beforeSourceKg = (double)source.GetItemAmount(IceType);
-            _beforeTargetKg = (double)target.GetItemAmount(IceType);
+            if (source != null)
+                break;
+        }
 
-            Log("TEST BEGIN");
-            Log("BEFORE Source=" + _beforeSourceKg.ToString("0.###") + " kg Target=" + _beforeTargetKg.ToString("0.###") + " kg");
-
-            bool moved = source.TransferItemTo(target, item, (MyFixedPoint)PulseKg);
-            double immediateSource = (double)source.GetItemAmount(IceType);
-            double immediateTarget = (double)target.GetItemAmount(IceType);
-
-            Log("REQUEST TransferItemTo(1 kg) returned " + (moved ? "TRUE" : "FALSE"));
-            Log("IMMEDIATE Source=" + immediateSource.ToString("0.###") + " kg Target=" + immediateTarget.ToString("0.###") + " kg");
-
-            if (!moved)
-            {
-                Log("RESULT: transfer request was rejected immediately.");
-                _complete = true;
-                return;
-            }
-
-            _pendingSource = source;
-            _pendingTarget = target;
-            _requestUtc = now;
-            _verified2 = false;
-            ReportState("Request returned TRUE; waiting for server replication checks at +2s and +5s.");
+        if (taggedSourceCount == 0)
+        {
+            ReportState("Idle: no accessible cargo BLOCK NAME contains " + SourceTag + ".");
             return;
         }
 
-        ReportState("Idle: no Ice found in " + SourceTag + ".");
+        if (source == null)
+        {
+            if (taggedSourcesWithIce == 0)
+                ReportState("Idle: found " + taggedSourceCount + " tagged " + SourceTag + " cargo block(s), but none contains Ice.");
+            else
+                ReportState("Idle: tagged " + SourceTag + " cargo has Ice, but no source with >=1 kg and a conveyor path to " + TargetTag + " was found.");
+            return;
+        }
+
+        _beforeSourceKg = (double)source.GetItemAmount(IceType);
+        _beforeTargetKg = (double)target.GetItemAmount(IceType);
+
+        Log("TEST BEGIN");
+        Log("SELECTED SOURCE " + selectedSourceName);
+        Log("BEFORE Source=" + _beforeSourceKg.ToString("0.###") + " kg Target=" + _beforeTargetKg.ToString("0.###") + " kg");
+
+        bool moved = source.TransferItemTo(target, selectedItem, (MyFixedPoint)PulseKg);
+        double immediateSource = (double)source.GetItemAmount(IceType);
+        double immediateTarget = (double)target.GetItemAmount(IceType);
+
+        Log("REQUEST TransferItemTo(1 kg) returned " + (moved ? "TRUE" : "FALSE"));
+        Log("IMMEDIATE Source=" + immediateSource.ToString("0.###") + " kg Target=" + immediateTarget.ToString("0.###") + " kg");
+
+        if (!moved)
+        {
+            Log("RESULT: transfer request was rejected immediately.");
+            _complete = true;
+            return;
+        }
+
+        _pendingSource = source;
+        _pendingTarget = target;
+        _requestUtc = now;
+        _verified2 = false;
+        ReportState("Request returned TRUE; waiting for server replication checks at +2s and +5s.");
     }
 
     private void VerifyPending(DateTime now)
