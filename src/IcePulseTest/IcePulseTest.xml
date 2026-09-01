@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PluginData xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="GitHubPlugin">
+  <Id>IcePulseTest.dll</Id>
+  <FriendlyName>Ice Pulse Test</FriendlyName>
+  <Tooltip>POC: requests exactly 1 kg of Ice into one tagged O2/H2 Generator every second.</Tooltip>
+  <Description>Proof-of-concept client plugin for Keen multiplayer testing.
+
+Setup:
+- Rename one cargo container containing Ice so its name includes [IceSource].
+- Rename one O2/H2 Generator so its name includes [IceTest].
+- Keep both on the grid you are actively controlling from a cockpit or control seat.
+- The plugin disables Use Conveyor and Auto-Refill only on the [IceTest] generator.
+- Every second it requests an exact 1 kg Ice transfer through the normal inventory API.
+- It never intentionally sends a partial pulse when less than 1 kg is available.
+- The server remains authoritative and can reject a transfer request.
+- Diagnostics are written to %APPDATA%\SpaceEngineers\IcePulseTest.log.
+
+This is a narrow inventory-transfer proof of concept, not a general Programmable Block script runner.</Description>
+  <Runtimes>CoreCLR</Runtimes>
+  <Platforms>Windows</Platforms>
+</PluginData>
