@@ -14,28 +14,39 @@ using MyItemType = VRage.Game.ModAPI.Ingame.MyItemType;
 namespace IcePulseTest;
 
 /// <summary>
-/// Minimal client-side proof of concept for Space Engineers/Pulsar.
-/// Once per second, requests an exact 1 kg Ice transfer from one tagged cargo
-/// container to one tagged O2/H2 Generator on the grid currently being controlled.
-/// Uses public Keen ModAPI/Ingame inventory surfaces and normal server authority.
+/// One-shot client-side inventory authority diagnostic for Space Engineers/Pulsar.
+/// It requests exactly 1 kg of Ice once, then verifies source and target inventories
+/// after replication delays so we can distinguish a local API success from a
+/// server-authoritative accepted transfer.
 /// </summary>
 public sealed class Plugin : IPlugin
 {
     private static readonly MyItemType IceType = MyItemType.MakeOre("Ice");
-    private static readonly TimeSpan UpdateInterval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan VerifyDelay2 = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan VerifyDelay5 = TimeSpan.FromSeconds(5);
 
     private const double PulseKg = 1.0;
     private const string SourceTag = "[IceSource]";
     private const string TargetTag = "[IceTest]";
 
     private readonly List<MyInventoryItem> _items = new();
-    private DateTime _nextUpdateUtc = DateTime.MinValue;
+    private DateTime _nextPollUtc = DateTime.MinValue;
+    private DateTime _requestUtc = DateTime.MinValue;
     private string _lastState = string.Empty;
     private string _lastError = string.Empty;
 
+    private IMyInventory? _pendingSource;
+    private IMyInventory? _pendingTarget;
+    private double _beforeSourceKg;
+    private double _beforeTargetKg;
+    private bool _verified2;
+    private bool _complete;
+
     public void Init(object gameInstance)
     {
-        Log("Ice Pulse Test 0.1.0 initialized.");
+        Log("Ice Pulse Test 0.2.0 initialized - one-shot authority diagnostic.");
+        Log("Tags are read from block NAMES: cargo " + SourceTag + " and generator " + TargetTag + ". Custom Data is not used.");
     }
 
     public void Dispose()
@@ -46,14 +57,23 @@ public sealed class Plugin : IPlugin
     public void Update()
     {
         DateTime now = DateTime.UtcNow;
-        if (now < _nextUpdateUtc)
+        if (now < _nextPollUtc)
             return;
 
-        _nextUpdateUtc = now + UpdateInterval;
+        _nextPollUtc = now + PollInterval;
 
         try
         {
-            RunCycle();
+            if (_complete)
+                return;
+
+            if (_pendingSource != null && _pendingTarget != null)
+            {
+                VerifyPending(now);
+                return;
+            }
+
+            StartOneShot(now);
             _lastError = string.Empty;
         }
         catch (Exception ex)
@@ -67,7 +87,7 @@ public sealed class Plugin : IPlugin
         }
     }
 
-    private void RunCycle()
+    private void StartOneShot(DateTime now)
     {
         IMyCubeGrid? grid = GetControlledGrid();
         if (grid == null)
@@ -79,7 +99,7 @@ public sealed class Plugin : IPlugin
         Sandbox.ModAPI.IMyCargoContainer? sourceBlock = null;
         foreach (Sandbox.ModAPI.IMyCargoContainer block in grid.GetFatBlocks<Sandbox.ModAPI.IMyCargoContainer>())
         {
-            if (CanManage(block) && HasTag(block, SourceTag))
+            if (CanManage(block) && HasNameTag(block, SourceTag))
             {
                 sourceBlock = block;
                 break;
@@ -89,7 +109,7 @@ public sealed class Plugin : IPlugin
         Sandbox.ModAPI.IMyGasGenerator? targetBlock = null;
         foreach (Sandbox.ModAPI.IMyGasGenerator block in grid.GetFatBlocks<Sandbox.ModAPI.IMyGasGenerator>())
         {
-            if (CanManage(block) && HasTag(block, TargetTag))
+            if (CanManage(block) && HasNameTag(block, TargetTag))
             {
                 targetBlock = block;
                 break;
@@ -98,13 +118,13 @@ public sealed class Plugin : IPlugin
 
         if (sourceBlock == null)
         {
-            ReportState("Idle: no accessible cargo named with " + SourceTag + ".");
+            ReportState("Idle: no accessible cargo BLOCK NAME contains " + SourceTag + ".");
             return;
         }
 
         if (targetBlock == null)
         {
-            ReportState("Idle: no accessible O2/H2 Generator named with " + TargetTag + ".");
+            ReportState("Idle: no accessible O2/H2 Generator BLOCK NAME contains " + TargetTag + ".");
             return;
         }
 
@@ -142,19 +162,79 @@ public sealed class Plugin : IPlugin
                 return;
             }
 
-            double before = (double)target.GetItemAmount(IceType);
+            _beforeSourceKg = (double)source.GetItemAmount(IceType);
+            _beforeTargetKg = (double)target.GetItemAmount(IceType);
+
+            Log("TEST BEGIN");
+            Log("BEFORE Source=" + _beforeSourceKg.ToString("0.###") + " kg Target=" + _beforeTargetKg.ToString("0.###") + " kg");
+
             bool moved = source.TransferItemTo(target, item, (MyFixedPoint)PulseKg);
-            double after = (double)target.GetItemAmount(IceType);
+            double immediateSource = (double)source.GetItemAmount(IceType);
+            double immediateTarget = (double)target.GetItemAmount(IceType);
 
-            if (moved)
-                ReportState("Pulse OK: 1 kg requested. Target " + before.ToString("0.###") + " -> " + after.ToString("0.###") + " kg.");
-            else
-                ReportState("Pulse rejected/failed by inventory or server.");
+            Log("REQUEST TransferItemTo(1 kg) returned " + (moved ? "TRUE" : "FALSE"));
+            Log("IMMEDIATE Source=" + immediateSource.ToString("0.###") + " kg Target=" + immediateTarget.ToString("0.###") + " kg");
 
+            if (!moved)
+            {
+                Log("RESULT: transfer request was rejected immediately.");
+                _complete = true;
+                return;
+            }
+
+            _pendingSource = source;
+            _pendingTarget = target;
+            _requestUtc = now;
+            _verified2 = false;
+            ReportState("Request returned TRUE; waiting for server replication checks at +2s and +5s.");
             return;
         }
 
         ReportState("Idle: no Ice found in " + SourceTag + ".");
+    }
+
+    private void VerifyPending(DateTime now)
+    {
+        if (_pendingSource == null || _pendingTarget == null)
+            return;
+
+        TimeSpan elapsed = now - _requestUtc;
+
+        if (!_verified2 && elapsed >= VerifyDelay2)
+        {
+            double source2 = (double)_pendingSource.GetItemAmount(IceType);
+            double target2 = (double)_pendingTarget.GetItemAmount(IceType);
+            Log("AFTER +2s Source=" + source2.ToString("0.###") + " kg Target=" + target2.ToString("0.###") + " kg");
+            _verified2 = true;
+        }
+
+        if (elapsed < VerifyDelay5)
+            return;
+
+        double source5 = (double)_pendingSource.GetItemAmount(IceType);
+        double target5 = (double)_pendingTarget.GetItemAmount(IceType);
+        Log("AFTER +5s Source=" + source5.ToString("0.###") + " kg Target=" + target5.ToString("0.###") + " kg");
+
+        double sourceDelta = source5 - _beforeSourceKg;
+        double targetDelta = target5 - _beforeTargetKg;
+
+        if (sourceDelta <= -0.999 && targetDelta >= 0.999)
+        {
+            Log("RESULT: SERVER ACCEPTED - source lost ~1 kg and target gained ~1 kg.");
+        }
+        else if (Math.Abs(sourceDelta) < 0.001 && Math.Abs(targetDelta) < 0.001)
+        {
+            Log("RESULT: SERVER NOT CONFIRMED - inventories returned to/remaining at pre-request values.");
+        }
+        else
+        {
+            Log("RESULT: AMBIGUOUS - SourceDelta=" + sourceDelta.ToString("0.###") + " kg TargetDelta=" + targetDelta.ToString("0.###") + " kg.");
+        }
+
+        Log("TEST COMPLETE - disable/re-enable or restart Space Engineers to run a fresh one-shot test.");
+        _pendingSource = null;
+        _pendingTarget = null;
+        _complete = true;
     }
 
     private static IMyCubeGrid? GetControlledGrid()
@@ -175,7 +255,7 @@ public sealed class Plugin : IPlugin
         return ((Sandbox.ModAPI.Ingame.IMyTerminalBlock)block).HasLocalPlayerAccess();
     }
 
-    private static bool HasTag(Sandbox.ModAPI.IMyTerminalBlock block, string tag)
+    private static bool HasNameTag(Sandbox.ModAPI.IMyTerminalBlock block, string tag)
     {
         string name = ((Sandbox.ModAPI.Ingame.IMyTerminalBlock)block).CustomName ?? string.Empty;
         return name.IndexOf(tag, StringComparison.OrdinalIgnoreCase) >= 0;
@@ -198,7 +278,7 @@ public sealed class Plugin : IPlugin
             string directory = Path.Combine(appData, "SpaceEngineers");
             Directory.CreateDirectory(directory);
             string path = Path.Combine(directory, "IcePulseTest.log");
-            File.AppendAllText(path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " " + message + Environment.NewLine);
+            File.AppendAllText(path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + " " + message + Environment.NewLine);
         }
         catch
         {
