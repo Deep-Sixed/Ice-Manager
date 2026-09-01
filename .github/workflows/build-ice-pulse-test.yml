@@ -1,0 +1,65 @@
+name: Build Ice Pulse Test
+
+on:
+  push:
+    branches:
+      - ice-pulse-poc
+    paths:
+      - 'src/**'
+      - 'README.md'
+      - '.github/workflows/build-ice-pulse-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          rm -rf out
+          dotnet build src/IcePulseTest/IcePulseTest.csproj \
+            --configuration Release \
+            --output out \
+            /p:DebugType=None \
+            /p:DebugSymbols=false
+          cp src/IcePulseTest/IcePulseTest.xml out/IcePulseTest.xml
+          sha256sum out/IcePulseTest.dll | tee out/IcePulseTest.sha256
+
+      - name: Validate package
+        run: |
+          set -euo pipefail
+          test -f out/IcePulseTest.dll
+          test -f out/IcePulseTest.xml
+          file out/IcePulseTest.dll
+          strings -a out/IcePulseTest.dll > /tmp/plugin-strings.txt
+          strings -el out/IcePulseTest.dll >> /tmp/plugin-strings.txt || true
+          grep -Fq 'IcePulseTest' /tmp/plugin-strings.txt
+          grep -Fq 'Ice Pulse Test' /tmp/plugin-strings.txt
+          grep -Fq '[IceSource]' /tmp/plugin-strings.txt
+          grep -Fq '[IceTest]' /tmp/plugin-strings.txt
+          grep -Fq 'IcePulseTest.log' /tmp/plugin-strings.txt
+          grep -Fq '<FriendlyName>Ice Pulse Test</FriendlyName>' out/IcePulseTest.xml
+          grep -Fq '<Runtimes>CoreCLR</Runtimes>' out/IcePulseTest.xml
+
+      - name: Upload plugin package
+        uses: actions/upload-artifact@v4
+        with:
+          name: IcePulseTest-0.1.0
+          path: |
+            out/IcePulseTest.dll
+            out/IcePulseTest.xml
+            out/IcePulseTest.sha256
+          if-no-files-found: error
+          retention-days: 7
