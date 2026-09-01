@@ -2,23 +2,22 @@
 <PluginData xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="GitHubPlugin">
   <Id>IcePulseTest.dll</Id>
   <FriendlyName>Ice Pulse Test</FriendlyName>
-  <Tooltip>0.3.0 diagnostic: finds a tagged cargo that actually contains Ice, requests one exact 1 kg transfer, then verifies +2s/+5s.</Tooltip>
+  <Tooltip>0.4.0 diagnostic: Custom Data tags + vanilla MyInventory.TransferByUser path, one exact 1 kg request.</Tooltip>
   <Description>One-shot client plugin for Keen multiplayer server-authority testing.
 
 Setup:
-- Any number of cargo containers may have [IceSource] in the BLOCK NAME.
-- At least one tagged cargo must actually contain 1 kg or more of Ice.
-- Rename one or more O2/H2 Generators so the BLOCK NAME includes [IceTest].
-- Custom Data is not used for either tag.
+- Put [IceSource] in the Custom Data of one or more cargo containers. Block names do not matter.
+- At least one tagged cargo must contain 1 kg or more of Ice.
+- Put [IceTest] in the Custom Data of one or more O2/H2 Generators. Block names do not matter.
 - Keep the blocks on the grid you are actively controlling from a cockpit or control seat.
-- Keep the [IceTest] generator OFF during the diagnostic so it does not consume the test Ice.
-- The plugin disables Use Conveyor and Auto-Refill on the selected [IceTest] generator.
-- Version 0.3.0 checks every tagged cargo on the controlled grid and selects the first one that contains at least 1 kg of Ice and can transfer to the target.
-- It requests exactly 1 kg once, records immediate inventory values, then verifies both inventories after 2 seconds and 5 seconds.
-- The log reports SERVER ACCEPTED, SERVER NOT CONFIRMED, or AMBIGUOUS based on source/target deltas.
+- Keep the selected generator OFF during the diagnostic so it does not consume the test Ice.
+- The plugin disables Use Conveyor and Auto-Refill on the selected target.
+- Version 0.4.0 does NOT call IMyInventory.TransferItemTo. It invokes the public Sandbox.Game.MyInventory.TransferByUser path used for user-initiated inventory transfers.
+- It requests exactly 1 kg once, then verifies source and target after 2 seconds and 5 seconds.
+- The log reports SERVER ACCEPTED, SERVER NOT CONFIRMED, AMBIGUOUS, or a TransferByUser reflection error.
 - Diagnostics are written to %APPDATA%\SpaceEngineers\IcePulseTest.log.
 
-This is a narrow inventory-transfer proof of concept, not a general Programmable Block script runner.</Description>
+This remains a narrow one-shot diagnostic. The server remains authoritative.</Description>
   <Runtimes>CoreCLR</Runtimes>
   <Platforms>Windows</Platforms>
 </PluginData>
