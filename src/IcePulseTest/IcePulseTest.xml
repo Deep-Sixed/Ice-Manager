@@ -2,17 +2,19 @@
 <PluginData xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="GitHubPlugin">
   <Id>IcePulseTest.dll</Id>
   <FriendlyName>Ice Pulse Test</FriendlyName>
-  <Tooltip>POC: requests exactly 1 kg of Ice into one tagged O2/H2 Generator every second.</Tooltip>
-  <Description>Proof-of-concept client plugin for Keen multiplayer testing.
+  <Tooltip>0.2.0 diagnostic: requests one exact 1 kg Ice transfer, then verifies inventories after +2s and +5s.</Tooltip>
+  <Description>One-shot client plugin for Keen multiplayer server-authority testing.
 
 Setup:
-- Rename one cargo container containing Ice so its name includes [IceSource].
-- Rename one O2/H2 Generator so its name includes [IceTest].
-- Keep both on the grid you are actively controlling from a cockpit or control seat.
-- The plugin disables Use Conveyor and Auto-Refill only on the [IceTest] generator.
-- Every second it requests an exact 1 kg Ice transfer through the normal inventory API.
-- It never intentionally sends a partial pulse when less than 1 kg is available.
-- The server remains authoritative and can reject a transfer request.
+- Rename one cargo container containing Ice so its BLOCK NAME includes [IceSource].
+- Rename one O2/H2 Generator so its BLOCK NAME includes [IceTest].
+- Custom Data is not used for either tag.
+- Keep both blocks on the grid you are actively controlling from a cockpit or control seat.
+- Keep the [IceTest] generator OFF during the diagnostic so it does not consume the test Ice.
+- The plugin disables Use Conveyor and Auto-Refill on the [IceTest] generator.
+- It requests exactly 1 kg once, records immediate inventory values, then verifies both inventories after 2 seconds and 5 seconds.
+- The log reports SERVER ACCEPTED, SERVER NOT CONFIRMED, or AMBIGUOUS based on source/target deltas.
+- The server remains authoritative.
 - Diagnostics are written to %APPDATA%\SpaceEngineers\IcePulseTest.log.
 
 This is a narrow inventory-transfer proof of concept, not a general Programmable Block script runner.</Description>
