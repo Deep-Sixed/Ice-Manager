@@ -7,14 +7,14 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
-    <Version>0.3.0.0</Version>
-    <AssemblyVersion>0.3.0.0</AssemblyVersion>
-    <FileVersion>0.3.0.0</FileVersion>
-    <InformationalVersion>0.3.0.0</InformationalVersion>
+    <Version>0.4.0.0</Version>
+    <AssemblyVersion>0.4.0.0</AssemblyVersion>
+    <FileVersion>0.4.0.0</FileVersion>
+    <InformationalVersion>0.4.0.0</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <AssemblyTitle>Ice Pulse Test</AssemblyTitle>
     <Product>Ice Pulse Test</Product>
-    <Description>Space Engineers client-side multi-source server-authority ice transfer diagnostic</Description>
+    <Description>Space Engineers Custom Data TransferByUser server-authority diagnostic</Description>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
