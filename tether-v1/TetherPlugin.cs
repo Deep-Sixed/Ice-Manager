@@ -1,5 +1,7 @@
 using System;
 using System.Reflection;
+using HarmonyLib;
+using Sandbox.Game.Entities;
 using Sandbox.ModAPI;
 using VRage.Game.ModAPI;
 using VRage.ModAPI;
@@ -10,24 +12,48 @@ using VRageMath;
 [assembly: AssemblyDescription("Clean-room Space Engineers client plugin for /tether remote-grid construction testing")]
 [assembly: AssemblyCompany("Clean-room test build")]
 [assembly: AssemblyProduct("Tether")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]
 
 namespace CleanRoomTether
 {
+    internal static class TetherState
+    {
+        internal static MyCubeGrid Grid;
+        internal static long PlacementRedirects;
+    }
+
+    [HarmonyPatch(typeof(MyBlockBuilderBase), nameof(MyBlockBuilderBase.FindClosestPlacementObject))]
+    internal static class PlacementGridPatch
+    {
+        private static void Postfix(ref MyCubeGrid closestGrid, ref MyVoxelBase closestVoxelMap)
+        {
+            MyCubeGrid tether = TetherState.Grid;
+            if (tether == null || tether.Closed || tether.MarkedForClose)
+                return;
+
+            closestGrid = tether;
+            closestVoxelMap = null;
+            TetherState.PlacementRedirects++;
+        }
+    }
+
     public sealed class TetherPlugin : IPlugin, IDisposable
     {
         private const string Prefix = "Tether";
         private const double TargetRayLengthMeters = 10000.0;
+        private const string HarmonyId = "CleanRoomTether.V2";
 
         private IMyCubeGrid _tetherGrid;
         private bool _chatRegistered;
         private bool _loadedNoticeShown;
-        private long _acceptedPlacements;
-        private long _rejectedPlacements;
-        private bool _failureNoticeShown;
+        private Harmony _harmony;
 
-        public void Init(object gameInstance) { }
+        public void Init(object gameInstance)
+        {
+            _harmony = new Harmony(HarmonyId);
+            _harmony.PatchAll(typeof(TetherPlugin).Assembly);
+        }
 
         public void Update()
         {
@@ -35,62 +61,18 @@ namespace CleanRoomTether
 
             if (MyAPIGateway.Session == null || MyAPIGateway.Utilities == null)
             {
-                _tetherGrid = null;
+                ClearStateOnly();
                 return;
             }
 
             if (!_loadedNoticeShown)
             {
                 _loadedNoticeShown = true;
-                ShowMessage("V1 loaded. Aim at a grid and type /tether");
+                ShowMessage("V2 loaded. Vanilla CubeBuilder target redirection enabled. Aim at a grid and type /tether");
             }
 
             if (_tetherGrid != null && (_tetherGrid.Closed || _tetherGrid.MarkedForClose))
-            {
                 ClearTether("target removed");
-                return;
-            }
-
-            if (_tetherGrid == null)
-                return;
-
-            var cubeBuilder = MyAPIGateway.CubeBuilder;
-            var input = MyAPIGateway.Input;
-            if (cubeBuilder == null || input == null)
-                return;
-
-            if (!cubeBuilder.BlockCreationIsActivated)
-                return;
-
-            if (!input.IsNewLeftMousePressed())
-                return;
-
-            bool accepted;
-            try
-            {
-                accepted = cubeBuilder.AddConstruction((IMyEntity)_tetherGrid);
-            }
-            catch (Exception e)
-            {
-                _rejectedPlacements++;
-                ShowMessage("construction exception: " + e.GetType().Name + " - " + e.Message);
-                return;
-            }
-
-            if (accepted)
-            {
-                _acceptedPlacements++;
-                _failureNoticeShown = false;
-            }
-            else
-            {
-                _rejectedPlacements++;
-                if (!_failureNoticeShown)
-                {
-                    _failureNoticeShown = true;
-                    ShowMessage("CubeBuilder rejected the tether construction. Use /tether status");
-                }
-            }
         }
 
         public void Dispose()
@@ -102,8 +84,15 @@ namespace CleanRoomTether
             }
             catch { }
 
+            try
+            {
+                _harmony?.UnpatchSelf();
+            }
+            catch { }
+
             _chatRegistered = false;
-            _tetherGrid = null;
+            _harmony = null;
+            ClearStateOnly();
         }
 
         private void TryRegisterChat()
@@ -189,10 +178,16 @@ namespace CleanRoomTether
                 return;
             }
 
+            MyCubeGrid concreteGrid = grid as MyCubeGrid;
+            if (concreteGrid == null)
+            {
+                ShowMessage("target grid could not be bound to the vanilla CubeBuilder");
+                return;
+            }
+
             _tetherGrid = grid;
-            _acceptedPlacements = 0;
-            _rejectedPlacements = 0;
-            _failureNoticeShown = false;
+            TetherState.Grid = concreteGrid;
+            TetherState.PlacementRedirects = 0;
 
             ShowMessage("TETHERED: " + GridLabel(grid) + " | id=" + grid.EntityId);
         }
@@ -227,24 +222,29 @@ namespace CleanRoomTether
             }
 
             string old = GridLabel(_tetherGrid);
-            _tetherGrid = null;
-            _failureNoticeShown = false;
+            ClearStateOnly();
             ShowMessage("tether " + reason + ": " + old);
+        }
+
+        private void ClearStateOnly()
+        {
+            _tetherGrid = null;
+            TetherState.Grid = null;
+            TetherState.PlacementRedirects = 0;
         }
 
         private void ShowStatus()
         {
             if (_tetherGrid == null)
             {
-                ShowMessage("OFF | accepted=" + _acceptedPlacements + " rejected=" + _rejectedPlacements);
+                ShowMessage("OFF | redirects=" + TetherState.PlacementRedirects);
                 return;
             }
 
             string state = (_tetherGrid.Closed || _tetherGrid.MarkedForClose) ? "INVALID" : "ON";
             ShowMessage(state + " | " + GridLabel(_tetherGrid)
                 + " | id=" + _tetherGrid.EntityId
-                + " | accepted=" + _acceptedPlacements
-                + " rejected=" + _rejectedPlacements);
+                + " | redirects=" + TetherState.PlacementRedirects);
         }
 
         private static string GridLabel(IMyCubeGrid grid)
