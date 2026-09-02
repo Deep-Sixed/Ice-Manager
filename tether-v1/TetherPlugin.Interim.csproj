@@ -25,4 +25,8 @@
     <Reference Include="VRage.Math" HintPath="$(SERefRoot)\VRage.Math.dll" Private="false" />
     <Reference Include="VRage.Input" HintPath="$(SERefRoot)\VRage.Input.dll" Private="false" />
   </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Lib.Harmony" Version="2.4.2" PrivateAssets="all" />
+  </ItemGroup>
 </Project>
