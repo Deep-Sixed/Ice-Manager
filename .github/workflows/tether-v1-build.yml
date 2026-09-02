@@ -71,6 +71,7 @@ jobs:
           ) | Set-Content -Path $rsp -Encoding ASCII
 
           $needed = @(
+            'netstandard.dll',
             'Sandbox.Common.dll',
             'Sandbox.Game.dll',
             'SpaceEngineers.Game.dll',
