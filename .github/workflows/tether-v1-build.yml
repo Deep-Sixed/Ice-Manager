@@ -18,8 +18,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path $steam | Out-Null
           Invoke-WebRequest 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip' -OutFile (Join-Path $steam 'steamcmd.zip')
           Expand-Archive (Join-Path $steam 'steamcmd.zip') -DestinationPath $steam -Force
+          # First launch often self-updates and may return 7 even when that update succeeds.
           & (Join-Path $steam 'steamcmd.exe') +quit
-          if ($LASTEXITCODE -ne 0) { throw "SteamCMD warm-up failed with exit code $LASTEXITCODE" }
+          Write-Host "SteamCMD warm-up exit code: $LASTEXITCODE (ignored; install step verifies output)"
 
       - name: Install Space Engineers Dedicated Server references
         shell: powershell
@@ -34,12 +35,14 @@ jobs:
           for ($attempt = 1; $attempt -le 4; $attempt++) {
             Write-Host "SteamCMD install attempt $attempt"
             & $steamExe +@sSteamCmdForcePlatformType windows +force_install_dir $se +login anonymous +app_info_update 1 +app_update 298740 validate +quit
+            $code = $LASTEXITCODE
             $sandbox = Get-ChildItem -Path $se -Recurse -Filter 'Sandbox.Game.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($sandbox) {
+              Write-Host "References found despite SteamCMD exit code $code"
               $installed = $true
               break
             }
-            Write-Host "Attempt $attempt did not produce Sandbox.Game.dll; retrying. Exit=$LASTEXITCODE"
+            Write-Host "Attempt $attempt did not produce Sandbox.Game.dll; retrying. Exit=$code"
             Start-Sleep -Seconds 5
           }
 
