@@ -1,4 +1,4 @@
-name: Tether V1 Build
+name: Tether V2 Build
 
 on:
   push:
@@ -51,49 +51,6 @@ jobs:
           Write-Host "Reference root: $($sandbox.Directory.FullName)"
           $global:LASTEXITCODE = 0
 
-      - name: Compile legacy CLR Tether.dll
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-          if (-not (Test-Path $csc)) { throw "csc.exe not found: $csc" }
-          if (-not (Test-Path $env:SE_REFROOT)) { throw "SE reference root missing: $env:SE_REFROOT" }
-
-          $outDir = Join-Path $env:GITHUB_WORKSPACE 'artifact'
-          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-          $rsp = Join-Path $env:RUNNER_TEMP 'tether.rsp'
-          @(
-            '/nologo',
-            '/target:library',
-            '/platform:x64',
-            '/optimize+',
-            ('/out:"' + (Join-Path $outDir 'Tether.dll') + '"')
-          ) | Set-Content -Path $rsp -Encoding ASCII
-
-          $needed = @(
-            'netstandard.dll',
-            'Sandbox.Common.dll',
-            'Sandbox.Game.dll',
-            'SpaceEngineers.Game.dll',
-            'VRage.dll',
-            'VRage.Game.dll',
-            'VRage.Library.dll',
-            'VRage.Math.dll',
-            'VRage.Input.dll'
-          )
-          foreach ($name in $needed) {
-            $p = Join-Path $env:SE_REFROOT $name
-            if (-not (Test-Path $p)) {
-              $found = Get-ChildItem -Path (Split-Path $env:SE_REFROOT -Parent) -Recurse -Filter $name -ErrorAction SilentlyContinue | Select-Object -First 1
-              if ($found) { $p = $found.FullName } else { Write-Host "Reference not found: $name"; continue }
-            }
-            ('/reference:"' + $p + '"') | Add-Content -Path $rsp -Encoding ASCII
-          }
-          ('"' + (Join-Path $env:GITHUB_WORKSPACE 'tether-v1\TetherPlugin.cs') + '"') | Add-Content -Path $rsp -Encoding ASCII
-
-          & $csc "@$rsp"
-          if ($LASTEXITCODE -ne 0) { throw "C# compile failed with exit code $LASTEXITCODE" }
-
       - name: Compile Pulsar Interim CoreCLR plugin
         shell: powershell
         run: |
@@ -110,16 +67,9 @@ jobs:
           Get-FileHash $dll -Algorithm SHA256 | Format-List
           Get-Item $dll | Format-List Name,Length,LastWriteTime
 
-      - name: Upload Tether legacy DLL
+      - name: Upload Tether V2 Pulsar Interim DLL
         uses: actions/upload-artifact@v4
         with:
-          name: Tether-V1-Legacy
-          path: artifact/Tether.dll
-          if-no-files-found: error
-
-      - name: Upload Tether Pulsar Interim DLL
-        uses: actions/upload-artifact@v4
-        with:
-          name: Tether-V1-Pulsar-Interim
+          name: Tether-V2-Pulsar-Interim
           path: artifact-interim/Tether-Pulsar-Interim.dll
           if-no-files-found: error
