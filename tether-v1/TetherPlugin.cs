@@ -84,12 +84,6 @@ namespace CleanRoomTether
             }
             catch { }
 
-            try
-            {
-                _harmony?.UnpatchSelf();
-            }
-            catch { }
-
             _chatRegistered = false;
             _harmony = null;
             ClearStateOnly();
