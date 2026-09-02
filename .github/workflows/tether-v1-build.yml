@@ -51,7 +51,7 @@ jobs:
           Write-Host "Reference root: $($sandbox.Directory.FullName)"
           $global:LASTEXITCODE = 0
 
-      - name: Compile Tether.dll
+      - name: Compile legacy CLR Tether.dll
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -91,18 +91,35 @@ jobs:
           }
           ('"' + (Join-Path $env:GITHUB_WORKSPACE 'tether-v1\TetherPlugin.cs') + '"') | Add-Content -Path $rsp -Encoding ASCII
 
-          Write-Host 'Compiler response file:'
-          Get-Content $rsp
           & $csc "@$rsp"
           if ($LASTEXITCODE -ne 0) { throw "C# compile failed with exit code $LASTEXITCODE" }
-          if (-not (Test-Path (Join-Path $outDir 'Tether.dll'))) { throw 'Tether.dll was not produced.' }
 
-          Get-FileHash (Join-Path $outDir 'Tether.dll') -Algorithm SHA256 | Format-List
-          Get-Item (Join-Path $outDir 'Tether.dll') | Format-List Name,Length,LastWriteTime
+      - name: Compile Pulsar Interim CoreCLR plugin
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $outDir = Join-Path $env:GITHUB_WORKSPACE 'artifact-interim'
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          dotnet build (Join-Path $env:GITHUB_WORKSPACE 'tether-v1\TetherPlugin.Interim.csproj') `
+            --configuration Release `
+            --output $outDir `
+            -p:SERefRoot="$env:SE_REFROOT"
+          if ($LASTEXITCODE -ne 0) { throw "Interim build failed with exit code $LASTEXITCODE" }
+          $dll = Join-Path $outDir 'Tether-Pulsar-Interim.dll'
+          if (-not (Test-Path $dll)) { throw 'Tether-Pulsar-Interim.dll was not produced.' }
+          Get-FileHash $dll -Algorithm SHA256 | Format-List
+          Get-Item $dll | Format-List Name,Length,LastWriteTime
 
-      - name: Upload Tether.dll
+      - name: Upload Tether legacy DLL
         uses: actions/upload-artifact@v4
         with:
-          name: Tether-V1
+          name: Tether-V1-Legacy
           path: artifact/Tether.dll
+          if-no-files-found: error
+
+      - name: Upload Tether Pulsar Interim DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tether-V1-Pulsar-Interim
+          path: artifact-interim/Tether-Pulsar-Interim.dll
           if-no-files-found: error
