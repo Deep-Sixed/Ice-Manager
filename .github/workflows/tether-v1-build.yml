@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download SteamCMD
+      - name: Download and warm SteamCMD
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -18,17 +18,32 @@ jobs:
           New-Item -ItemType Directory -Force -Path $steam | Out-Null
           Invoke-WebRequest 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip' -OutFile (Join-Path $steam 'steamcmd.zip')
           Expand-Archive (Join-Path $steam 'steamcmd.zip') -DestinationPath $steam -Force
+          & (Join-Path $steam 'steamcmd.exe') +quit
+          if ($LASTEXITCODE -ne 0) { throw "SteamCMD warm-up failed with exit code $LASTEXITCODE" }
 
       - name: Install Space Engineers Dedicated Server references
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $steam = Join-Path $env:RUNNER_TEMP 'steamcmd'
+          $steamExe = Join-Path $steam 'steamcmd.exe'
           $se = Join-Path $env:RUNNER_TEMP 'SpaceEngineersDedicated'
-          & (Join-Path $steam 'steamcmd.exe') +force_install_dir $se +login anonymous +app_update 298740 validate +quit
-          if ($LASTEXITCODE -ne 0) { throw "SteamCMD failed with exit code $LASTEXITCODE" }
-          $sandbox = Get-ChildItem -Path $se -Recurse -Filter 'Sandbox.Game.dll' | Select-Object -First 1
-          if (-not $sandbox) { throw 'Sandbox.Game.dll was not found after SteamCMD install.' }
+          New-Item -ItemType Directory -Force -Path $se | Out-Null
+
+          $installed = $false
+          for ($attempt = 1; $attempt -le 4; $attempt++) {
+            Write-Host "SteamCMD install attempt $attempt"
+            & $steamExe +@sSteamCmdForcePlatformType windows +force_install_dir $se +login anonymous +app_info_update 1 +app_update 298740 validate +quit
+            $sandbox = Get-ChildItem -Path $se -Recurse -Filter 'Sandbox.Game.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($sandbox) {
+              $installed = $true
+              break
+            }
+            Write-Host "Attempt $attempt did not produce Sandbox.Game.dll; retrying. Exit=$LASTEXITCODE"
+            Start-Sleep -Seconds 5
+          }
+
+          if (-not $installed) { throw 'Space Engineers Dedicated Server references were not installed after retries.' }
           "SE_REFROOT=$($sandbox.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "Reference root: $($sandbox.Directory.FullName)"
 
@@ -64,9 +79,8 @@ jobs:
           foreach ($name in $needed) {
             $p = Join-Path $env:SE_REFROOT $name
             if (-not (Test-Path $p)) {
-              Write-Host "Optional/reference not present at root: $name"
-              $found = Get-ChildItem -Path (Split-Path $env:SE_REFROOT -Parent) -Recurse -Filter $name | Select-Object -First 1
-              if ($found) { $p = $found.FullName } else { continue }
+              $found = Get-ChildItem -Path (Split-Path $env:SE_REFROOT -Parent) -Recurse -Filter $name -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($found) { $p = $found.FullName } else { Write-Host "Reference not found: $name"; continue }
             }
             ('/reference:"' + $p + '"') | Add-Content -Path $rsp -Encoding ASCII
           }
